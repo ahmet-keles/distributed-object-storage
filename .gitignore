@@ -1,0 +1,6 @@
+.env
+.DS_Store
+# Maven build output
+**/target/
+# Local storage-node data when running on the host
+data/

@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # One job per service. fail-fast is off so both results are reported,
+    # but the workflow still fails if either service fails.
+    name: ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - metadata-service
+          - storage-node
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          # Cache keys are per job: cache entries are immutable per key, so
+          # parallel jobs sharing one key would race. Each matrix leg caches
+          # against its own pom.
+          cache-dependency-path: services/${{ matrix.service }}/pom.xml
+
+      - name: Verify Docker and pre-pull test images
+        run: .github/scripts/prepare-docker.sh postgres:17-alpine
+
+      - name: Run ${{ matrix.service }} tests
+        working-directory: services/${{ matrix.service }}
+        run: ./mvnw -B --no-transfer-progress test
+
+  e2e:
+    # Cross-service end-to-end suite (integration-tests/): builds both boot
+    # jars, then exercises upload/replication/checksum/node-loss against
+    # PostgreSQL, three storage-node containers, and the metadata service.
+    # Independent of the matrix job on purpose: a red here means the seam is
+    # broken, a red there means a service is.
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: |
+            services/metadata-service/pom.xml
+            services/storage-node/pom.xml
+            integration-tests/pom.xml
+
+      - name: Verify Docker and pre-pull test images
+        run: .github/scripts/prepare-docker.sh postgres:17-alpine eclipse-temurin:21-jre
+
+      - name: Build metadata-service jar
+        working-directory: services/metadata-service
+        run: ./mvnw -B --no-transfer-progress -DskipTests package
+
+      - name: Build storage-node jar
+        working-directory: services/storage-node
+        run: ./mvnw -B --no-transfer-progress -DskipTests package
+
+      - name: Run end-to-end tests
+        working-directory: integration-tests
+        run: ./mvnw -B --no-transfer-progress test
