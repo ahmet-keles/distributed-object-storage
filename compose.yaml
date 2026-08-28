@@ -1,0 +1,67 @@
+# Local development infrastructure: the metadata database and three storage
+# nodes. metadata-service itself runs on the host (see README) and reaches
+# the nodes over their published ports, matching its default configuration
+# (node-1..3 on localhost:9001..9003).
+#
+# Build the storage-node jar before bringing the stack up:
+#   (cd services/storage-node && ./mvnw -DskipTests package)
+#   docker compose up -d --wait
+
+services:
+  metadata-db:
+    image: postgres:17-alpine
+    container_name: objectstore-metadata-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${METADATA_POSTGRES_DB:?METADATA_POSTGRES_DB is required - copy .env.example to .env}
+      POSTGRES_USER: ${METADATA_POSTGRES_USER:?METADATA_POSTGRES_USER is required - copy .env.example to .env}
+      POSTGRES_PASSWORD: ${METADATA_POSTGRES_PASSWORD:?METADATA_POSTGRES_PASSWORD is required - copy .env.example to .env}
+    ports:
+      - "${METADATA_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - metadata_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${METADATA_POSTGRES_USER} -d ${METADATA_POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  storage-node-1: &storage-node
+    build: services/storage-node
+    container_name: objectstore-node-1
+    restart: unless-stopped
+    ports:
+      - "9001:9000"
+    volumes:
+      - node1_data:/data
+    healthcheck:
+      # The JRE image ships no curl/wget; a bash TCP probe is enough to know
+      # the HTTP port is accepting connections.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  storage-node-2:
+    <<: *storage-node
+    container_name: objectstore-node-2
+    ports:
+      - "9002:9000"
+    volumes:
+      - node2_data:/data
+
+  storage-node-3:
+    <<: *storage-node
+    container_name: objectstore-node-3
+    ports:
+      - "9003:9000"
+    volumes:
+      - node3_data:/data
+
+volumes:
+  metadata_db_data:
+  node1_data:
+  node2_data:
+  node3_data:
