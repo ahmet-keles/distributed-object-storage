@@ -1,5 +1,6 @@
 package com.ahmetkeles.metadataservice.api;
 
+import com.ahmetkeles.metadataservice.service.DownloadedObject;
 import com.ahmetkeles.metadataservice.service.ObjectPlan;
 import com.ahmetkeles.metadataservice.service.ObjectStorageService;
 import org.springframework.http.HttpStatus;
@@ -40,13 +41,15 @@ public class ObjectController {
 
     @GetMapping("/{key}")
     public ResponseEntity<byte[]> download(@PathVariable String key) {
-        byte[] content = objectStorageService.download(key);
-        ObjectPlan plan = objectStorageService.metadata(key);
+        // One service call, one plan: the body and the checksum header come
+        // from the same snapshot. Re-reading metadata here could pair these
+        // bytes with a different object that replaced the key mid-request.
+        DownloadedObject downloaded = objectStorageService.download(key);
 
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .header(OBJECT_SHA256_HEADER, plan.sha256())
-                .body(content);
+                .header(OBJECT_SHA256_HEADER, downloaded.plan().sha256())
+                .body(downloaded.content());
     }
 
     @GetMapping("/{key}/metadata")

@@ -138,7 +138,13 @@ public class ObjectStorageService {
         return metadataStore.planFor(objectKey).orElseThrow();
     }
 
-    public byte[] download(String objectKey) {
+    /**
+     * Reads the plan exactly once and returns the bytes together with that
+     * same plan. Everything the response says about the object — checksum
+     * included — must come from this one snapshot; a second metadata read
+     * could observe a different object under the same key.
+     */
+    public DownloadedObject download(String objectKey) {
         validateKey(objectKey);
 
         ObjectPlan plan = metadataStore.planFor(objectKey)
@@ -160,7 +166,7 @@ public class ObjectStorageService {
             throw new ObjectUnreadableException(objectKey, -1);
         }
 
-        return content;
+        return new DownloadedObject(content, plan);
     }
 
     public ObjectPlan metadata(String objectKey) {

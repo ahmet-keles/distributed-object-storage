@@ -22,8 +22,12 @@ import java.util.UUID;
  * object spread across the cluster.
  *
  * <p>Placement decides where to WRITE. Reads never call this: they use the
- * replica locations recorded in the database, so re-configuring the node
- * list cannot orphan existing objects (it only changes future placements).
+ * replica locations recorded in the database. Reordering the node list or
+ * changing a node's URL is therefore safe as long as node IDS are preserved
+ * — but removing or renaming an id that still owns recorded replicas makes
+ * those replicas unreachable (and, at replication factor 2, losing both ids
+ * of a chunk makes the object unreadable). Membership is static in
+ * milestone 1; dynamic membership, migration, and repair are future work.
  */
 @Service
 public class ChunkPlacementService {

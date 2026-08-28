@@ -155,4 +155,31 @@ class ChunkApiIntegrationTest {
         new SecureRandom().nextBytes(bytes);
         return bytes;
     }
+
+    @Test
+    void failedWriteLeavesNoTemporaryFileBehind() throws Exception {
+        UUID chunkId = UUID.randomUUID();
+        byte[] bytes = randomBytes(64);
+
+        // Force the atomic move to fail deterministically: the chunk's final
+        // path is pre-created as a non-empty DIRECTORY, which REPLACE_EXISTING
+        // cannot replace.
+        Path fanOut = tempDir.resolve("chunks")
+                .resolve(chunkId.toString().substring(0, 2));
+        Path target = fanOut.resolve(chunkId.toString());
+        Files.createDirectories(target);
+        Files.writeString(target.resolve("occupied"), "x");
+
+        ResponseEntity<Void> response = put(chunkId, bytes,
+                ChunkStore.sha256Hex(bytes));
+
+        assertTrue(response.getStatusCode().is5xxServerError(),
+                "the write must fail, got " + response.getStatusCode());
+
+        try (var files = Files.list(fanOut)) {
+            assertTrue(files.noneMatch(path ->
+                            path.getFileName().toString().endsWith(".tmp")),
+                    "a failed write must not leak its temporary file");
+        }
+    }
 }

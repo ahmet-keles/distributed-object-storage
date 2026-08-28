@@ -53,10 +53,22 @@ public class ChunkStore {
 
             Path temp = Files.createTempFile(
                     target.getParent(), chunkId.toString(), ".tmp");
-            Files.write(temp, bytes);
-            Files.move(temp, target,
-                    StandardCopyOption.REPLACE_EXISTING,
-                    StandardCopyOption.ATOMIC_MOVE);
+            try {
+                Files.write(temp, bytes);
+                Files.move(temp, target,
+                        StandardCopyOption.REPLACE_EXISTING,
+                        StandardCopyOption.ATOMIC_MOVE);
+            } catch (IOException exception) {
+                // The write or the move failed: the chunk never became
+                // visible (atomicity is untouched), so the temp file is
+                // garbage — remove it best-effort before propagating.
+                try {
+                    Files.deleteIfExists(temp);
+                } catch (IOException suppressed) {
+                    exception.addSuppressed(suppressed);
+                }
+                throw exception;
+            }
         } catch (IOException exception) {
             throw new UncheckedIOException(
                     "Failed to store chunk " + chunkId, exception);

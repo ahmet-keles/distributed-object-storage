@@ -59,8 +59,11 @@ on every read. Nodes never talk to each other and hold no metadata.
 ### Read path (download)
 
 1. `GET /api/objects/{key}` loads the object's chunk map from PostgreSQL —
-   reads use the recorded replica locations, never the placement function,
-   so reconfiguring the node list cannot orphan existing objects.
+   reads use the recorded replica locations, never the placement function.
+   Replicas are recorded by node **id**, resolved against the configured
+   node list at read time: reordering the list or moving a node to a new
+   URL is safe while ids are preserved, but removing or renaming an id that
+   still owns recorded replicas makes those replicas unreachable.
 2. Each chunk is fetched from its replicas in recorded priority order. A
    replica fails the attempt if its node is unreachable **or** if the bytes
    do not hash to the chunk's recorded SHA-256 — a dead node and a corrupted
@@ -68,7 +71,10 @@ on every read. Nodes never talk to each other and hold no metadata.
 3. If no replica of some chunk yields intact bytes, the download fails with
    `502` (the metadata is intact; the read can succeed once a node returns).
 4. The reassembled object is verified against the recorded object SHA-256
-   and served with it in the `X-Object-Sha256` header.
+   and served with it in the `X-Object-Sha256` header. Body and header come
+   from the **same metadata snapshot**: the plan is read once per download,
+   so an object replaced under the same key mid-request can never pair one
+   version's bytes with another version's checksum.
 
 With replication factor 2, this is what makes **any single node loss
 survivable** for reads.
@@ -159,9 +165,14 @@ than pretending otherwise:
 - **No repair or re-replication.** A lost node's replicas are not rebuilt;
   reads survive on the remaining replica, but redundancy is not restored,
   and a second loss can make objects unreadable.
-- **Static membership.** Nodes are configuration, not discovery. Adding or
-  removing nodes changes placement for *new* objects only (reads always use
-  recorded locations); there is no rebalancing.
+- **Static membership.** Nodes are configuration, not discovery, and node
+  ids are load-bearing: replicas are recorded against them. Reordering the
+  list or changing a node's URL is safe while ids are preserved; adding
+  nodes changes placement for *new* objects only; but **removing or
+  renaming an id that still owns recorded replicas makes those replicas
+  unreachable** — and losing both ids of a chunk makes the object
+  unreadable until an id returns. There is no rebalancing, migration, or
+  repair; dynamic membership is future work.
 - **Modulo placement, not consistent hashing.** Changing the node count
   remaps future placements wholesale. Fine at this scale; consistent
   hashing comes later.

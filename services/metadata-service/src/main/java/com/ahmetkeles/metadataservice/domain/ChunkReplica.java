@@ -13,8 +13,10 @@ import java.util.UUID;
 /**
  * One recorded copy of a chunk on one storage node. The database — not the
  * placement function — is the source of truth for reads: an object is always
- * read from where its chunks were actually written, even if the node list or
- * placement logic changes later.
+ * read from where its chunks were actually written. The recorded {@code
+ * nodeId} must still resolve against the configured node list at read time,
+ * so node ids are load-bearing: removing or renaming an id that owns
+ * replicas makes them unreachable until the id returns.
  */
 @Entity
 @Table(name = "chunk_replicas")

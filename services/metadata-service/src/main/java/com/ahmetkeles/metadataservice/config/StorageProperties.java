@@ -8,9 +8,11 @@ import java.util.List;
  * Static cluster topology and storage policy. Node membership is
  * configuration, not discovery: every node this service may read from or
  * write to is listed here, and the deterministic placement function is
- * computed over this list sorted by node id. Changing the list therefore
- * changes placement for new objects only — existing objects are read from
- * the replica locations recorded in the database, never re-derived.
+ * computed over this list sorted by node id. Reads resolve the node ids
+ * recorded in the database against this list, never re-derive placement —
+ * so reordering entries or changing URLs is safe while ids are preserved,
+ * but removing or renaming an id that still owns recorded replicas makes
+ * those replicas unreachable. Membership is static in milestone 1.
  */
 @ConfigurationProperties(prefix = "storage")
 public record StorageProperties(
