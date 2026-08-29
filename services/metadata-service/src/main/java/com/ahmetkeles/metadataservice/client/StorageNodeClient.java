@@ -1,6 +1,8 @@
 package com.ahmetkeles.metadataservice.client;
 
 import com.ahmetkeles.metadataservice.config.StorageProperties;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -50,6 +52,29 @@ public class StorageNodeClient {
             throw new StorageNodeUnavailableException(
                     "Write of chunk " + chunkId + " to node " + node.id()
                             + " failed", exception);
+        }
+    }
+
+    /**
+     * HEAD-probes one replica. Never throws: an unreachable node (and any
+     * server error) is a data point for the repair sweep, not a failure of
+     * the sweep itself.
+     */
+    public ReplicaProbe probeChunk(StorageProperties.Node node, UUID chunkId) {
+        try {
+            return restClient.method(HttpMethod.HEAD)
+                    .uri(node.baseUrl() + "/chunks/" + chunkId)
+                    .exchange((request, response) -> {
+                        if (response.getStatusCode().is2xxSuccessful()) {
+                            return ReplicaProbe.PRESENT;
+                        }
+                        if (response.getStatusCode() == HttpStatus.NOT_FOUND) {
+                            return ReplicaProbe.MISSING;
+                        }
+                        return ReplicaProbe.UNREACHABLE;
+                    });
+        } catch (RestClientException exception) {
+            return ReplicaProbe.UNREACHABLE;
         }
     }
 

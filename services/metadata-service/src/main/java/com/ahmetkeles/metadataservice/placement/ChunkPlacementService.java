@@ -45,16 +45,28 @@ public class ChunkPlacementService {
     /** Replica targets for one chunk, in priority (read-preference) order. */
     public List<StorageProperties.Node> replicasFor(UUID objectId,
                                                     int chunkIndex) {
+        return ringFor(objectId, chunkIndex).subList(0, replicationFactor);
+    }
+
+    /**
+     * Every configured node in this chunk's ring order (primary slot first).
+     * Repair picks re-replication targets by walking this order and skipping
+     * nodes that already hold a recorded replica — deterministic, so
+     * concurrent repairers converge on the same target and the database's
+     * uniqueness constraints absorb the race.
+     */
+    public List<StorageProperties.Node> ringFor(UUID objectId,
+                                                int chunkIndex) {
         int nodeCount = sortedNodes.size();
         int primary = Math.floorMod(
                 placementHash(objectId, chunkIndex), nodeCount);
 
-        List<StorageProperties.Node> replicas = new ArrayList<>();
-        for (int r = 0; r < replicationFactor; r++) {
-            replicas.add(sortedNodes.get((primary + r) % nodeCount));
+        List<StorageProperties.Node> ring = new ArrayList<>();
+        for (int r = 0; r < nodeCount; r++) {
+            ring.add(sortedNodes.get((primary + r) % nodeCount));
         }
 
-        return replicas;
+        return ring;
     }
 
     private static int placementHash(UUID objectId, int chunkIndex) {

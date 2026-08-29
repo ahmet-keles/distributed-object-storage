@@ -75,6 +75,15 @@ public class ChunkStore {
         }
     }
 
+    /**
+     * Presence check without reading the bytes. Used by the repair sweep to
+     * probe replicas cheaply; integrity is still only proven by reading and
+     * hashing, which callers do before trusting the content.
+     */
+    public boolean exists(UUID chunkId) {
+        return Files.exists(pathFor(chunkId));
+    }
+
     public byte[] get(UUID chunkId) {
         Path path = pathFor(chunkId);
 

@@ -75,6 +75,10 @@ class ObjectStorageIntegrationTest {
         registry.add("storage.replication-factor", () -> 2);
         registry.add("storage.max-object-size-bytes", () -> 1_000_000);
 
+        // These tests script node failures and count bytes and rows exactly;
+        // a background repair sweep would race those assertions.
+        registry.add("storage.repair.enabled", () -> false);
+
         registry.add("storage.nodes[0].id", () -> "node-1");
         registry.add("storage.nodes[0].base-url", node1::baseUrl);
         registry.add("storage.nodes[1].id", () -> "node-2");

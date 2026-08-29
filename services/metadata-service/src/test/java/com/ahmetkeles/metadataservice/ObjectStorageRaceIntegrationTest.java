@@ -82,6 +82,10 @@ class ObjectStorageRaceIntegrationTest {
         registry.add("storage.replication-factor", () -> 2);
         registry.add("storage.max-object-size-bytes", () -> 1_000_000);
 
+        // These races are choreographed step by step; a background repair
+        // sweep would be an uninvited third participant.
+        registry.add("storage.repair.enabled", () -> false);
+
         registry.add("storage.nodes[0].id", () -> "node-1");
         registry.add("storage.nodes[0].base-url", node1::baseUrl);
         registry.add("storage.nodes[1].id", () -> "node-2");

@@ -21,6 +21,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
+import static org.awaitility.Awaitility.await;
+
 /**
  * The shared five-container stack: PostgreSQL for metadata, three storage
  * nodes, and the metadata service — the services running as black-box
@@ -52,8 +54,48 @@ final class E2eStack {
         return instance;
     }
 
+    private final String subnetPrefix;
+
     private E2eStack() {
-        Network network = Network.newNetwork();
+        // Dedicated subnet so the storage nodes can hold STATIC IPs. With
+        // dynamic addressing, Docker hands a restarted container the lowest
+        // free IP — and this suite's stop-two/start-two repair choreography
+        // then SWAPS the two nodes' IPs about half the time, leaving stale
+        // alias resolutions and neighbor caches routing one node's traffic
+        // to the other for tens of seconds. A pinned IP per node removes
+        // the swap entirely: a restarted node is always exactly where it
+        // was.
+        Network network = null;
+        String prefix = null;
+        RuntimeException lastFailure = null;
+        for (int attempt = 0; attempt < 5 && network == null; attempt++) {
+            // Random third octet: a fixed subnet collides with the previous
+            // run's network when suites run back to back (Ryuk removes it
+            // only seconds after the earlier JVM exits).
+            String candidate = "10.213." + java.util.concurrent
+                    .ThreadLocalRandom.current().nextInt(256) + ".";
+            Network candidateNetwork = Network.builder()
+                    .createNetworkCmdModifier(cmd -> cmd.withIpam(
+                            new com.github.dockerjava.api.model
+                                    .Network.Ipam()
+                                    .withConfig(new com.github.dockerjava.api
+                                            .model.Network.Ipam.Config()
+                                            .withSubnet(candidate + "0/24"))))
+                    .build();
+            try {
+                candidateNetwork.getId();
+                network = candidateNetwork;
+                prefix = candidate;
+            } catch (RuntimeException exception) {
+                lastFailure = exception;
+            }
+        }
+        if (network == null) {
+            throw new IllegalStateException(
+                    "Could not create a network with a free /24 subnet",
+                    lastFailure);
+        }
+        subnetPrefix = prefix;
 
         metadataDb = new PostgreSQLContainer<>(POSTGRES_IMAGE)
                 .withDatabaseName("objectstore")
@@ -64,11 +106,16 @@ final class E2eStack {
 
         for (int i = 1; i <= 3; i++) {
             String alias = "storage-node-" + i;
+            // High static addresses (.101+) stay clear of the low range the
+            // subnet's allocator hands to the db and the metadata app.
+            String staticIp = subnetPrefix + (100 + i);
             storageNodes.put("node-" + i, appContainer(
                     network, alias, "storage-node", Map.of(
                             "STORAGE_NODE_PORT", "9000",
                             "STORAGE_NODE_DATA_DIR", "/data"
                     ))
+                    .withCreateContainerCmdModifier(
+                            cmd -> cmd.withIpv4Address(staticIp))
                     .withExposedPorts(9000)
                     .waitingFor(Wait.forHttp("/actuator/health")
                             .forPort(9000).forStatusCode(200)
@@ -85,7 +132,11 @@ final class E2eStack {
                 "METADATA_POSTGRES_DB", "objectstore",
                 "METADATA_POSTGRES_USER", "objectstore_user",
                 "METADATA_POSTGRES_PASSWORD", DB_PASSWORD,
-                "STORAGE_CHUNK_SIZE_BYTES", String.valueOf(CHUNK_SIZE)
+                "STORAGE_CHUNK_SIZE_BYTES", String.valueOf(CHUNK_SIZE),
+                // Tight sweep interval so the repair e2e test observes
+                // recovery in seconds; repair only ever acts on degraded
+                // chunks, so the other test classes are unaffected by it.
+                "STORAGE_REPAIR_INTERVAL", "PT2S"
         ));
         for (int i = 1; i <= 3; i++) {
             metadataEnv.put("STORAGE_NODES_" + (i - 1) + "_ID", "node-" + i);
@@ -143,10 +194,26 @@ final class E2eStack {
                 .stopContainerCmd(node.getContainerId()).exec();
     }
 
+    /**
+     * Starts the node's container and blocks until it is addressable again
+     * from inside the cluster network. Docker registers the container's
+     * embedded-DNS record asynchronously — the alias can stay unresolvable
+     * for several seconds after {@code docker start} returns — so "started"
+     * here means the coordinator's own network namespace resolves the node
+     * again, not merely that the container process exists.
+     */
     void startNode(String nodeId) {
         GenericContainer<?> node = storageNodes.get(nodeId);
         node.getDockerClient()
                 .startContainerCmd(node.getContainerId()).exec();
+
+        String alias = "storage-" + nodeId;
+        await().atMost(Duration.ofMinutes(2))
+                .pollInterval(Duration.ofMillis(250))
+                .ignoreExceptions()
+                .until(() -> metadataApp.execInContainer(
+                                "bash", "-lc", "getent hosts " + alias)
+                        .getExitCode() == 0);
     }
 
     private static GenericContainer<?> appContainer(
