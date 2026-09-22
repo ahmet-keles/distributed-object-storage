@@ -47,6 +47,23 @@ final class FakeStorageNode {
         corrupt.set(value);
     }
 
+    /** Silently loses one stored chunk — a replica gone missing at rest. */
+    void drop(String chunkId) {
+        chunks.remove(chunkId);
+    }
+
+    /**
+     * Flips a bit in the STORED bytes of one chunk — persistent bit rot,
+     * unlike {@link #setCorrupt}, which only garbles what is served.
+     */
+    void corruptStored(String chunkId) {
+        chunks.computeIfPresent(chunkId, (id, bytes) -> {
+            byte[] rotted = bytes.clone();
+            rotted[0] ^= 0x7F;
+            return rotted;
+        });
+    }
+
     boolean holds(String chunkId) {
         return chunks.containsKey(chunkId);
     }
@@ -92,6 +109,8 @@ final class FakeStorageNode {
                     exchange.sendResponseHeaders(200, bytes.length);
                     exchange.getResponseBody().write(bytes);
                 }
+                case "HEAD" -> exchange.sendResponseHeaders(
+                        chunks.containsKey(chunkId) ? 200 : 404, -1);
                 case "DELETE" -> {
                     chunks.remove(chunkId);
                     exchange.sendResponseHeaders(204, -1);

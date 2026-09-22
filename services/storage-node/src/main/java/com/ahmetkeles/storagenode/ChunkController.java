@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.UUID;
@@ -41,6 +42,18 @@ public class ChunkController {
     ) {
         chunkStore.put(chunkId, body, declaredSha256);
         return ResponseEntity.status(HttpStatus.CREATED).build();
+    }
+
+    /**
+     * Existence probe: 200 if the chunk is stored here, 404 if not. Explicit
+     * rather than Spring's implicit HEAD-for-GET so a probe never reads the
+     * chunk bytes from disk — it answers presence, not integrity.
+     */
+    @RequestMapping(value = "/{chunkId}", method = RequestMethod.HEAD)
+    public ResponseEntity<Void> head(@PathVariable UUID chunkId) {
+        return chunkStore.exists(chunkId)
+                ? ResponseEntity.ok().build()
+                : ResponseEntity.notFound().build();
     }
 
     @GetMapping("/{chunkId}")

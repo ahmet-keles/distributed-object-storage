@@ -107,6 +107,24 @@ class ChunkApiIntegrationTest {
     }
 
     @Test
+    void headReportsPresenceWithoutABody() {
+        UUID chunkId = UUID.randomUUID();
+        byte[] bytes = randomBytes(256);
+
+        assertEquals(HttpStatus.NOT_FOUND, rest.exchange(
+                        url(chunkId), HttpMethod.HEAD, null, Void.class)
+                .getStatusCode(), "a chunk not stored here probes 404");
+
+        put(chunkId, bytes, ChunkStore.sha256Hex(bytes));
+
+        ResponseEntity<byte[]> head = rest.exchange(
+                url(chunkId), HttpMethod.HEAD, null, byte[].class);
+        assertEquals(HttpStatus.OK, head.getStatusCode());
+        assertTrue(head.getBody() == null || head.getBody().length == 0,
+                "a probe must never carry the chunk bytes");
+    }
+
+    @Test
     void deleteRemovesTheChunkAndIsIdempotent() {
         UUID chunkId = UUID.randomUUID();
         byte[] bytes = randomBytes(64);

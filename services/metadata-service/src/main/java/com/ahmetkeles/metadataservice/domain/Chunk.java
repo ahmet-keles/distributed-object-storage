@@ -61,6 +61,10 @@ public class Chunk {
         return id;
     }
 
+    public StoredObject getObject() {
+        return object;
+    }
+
     public int getChunkIndex() {
         return chunkIndex;
     }
