@@ -165,6 +165,13 @@ Recovery semantics to know:
 | `GET` | `/api/objects/{key}` | Download. `200` bytes + `X-Object-Sha256`; `404`; `502` if some chunk has no intact replica |
 | `GET` | `/api/objects/{key}/metadata` | Chunk map: sizes, checksums, and the nodes holding each replica |
 | `DELETE` | `/api/objects/{key}` | `204`; removes metadata, best-effort removes chunk bytes |
+| `GET` | `/api/nodes/health` | Configured storage-node status snapshots (`UNKNOWN`, `HEALTHY`, `DOWN`, or `RECOVERING`) |
+
+The coordinator probes every configured node's `/actuator/health` endpoint
+every five seconds by default. A node is `RECOVERING` after its first
+successful probe following `DOWN` and returns to `HEALTHY` after the next
+successful probe. Repair skips nodes currently marked `DOWN`; it still checks
+chunk presence on healthy or recovering nodes before changing replica metadata.
 
 Keys match `[A-Za-z0-9][A-Za-z0-9._-]{0,199}`. There is no overwrite in
 milestone 1: delete first, then re-upload.
