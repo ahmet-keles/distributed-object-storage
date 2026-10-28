@@ -231,6 +231,45 @@ Docker must be running — integration tests use Testcontainers.
 CI (`.github/workflows/ci.yml`) runs both service suites and the e2e suite
 on every push to `main` and every pull request.
 
+## Benchmark
+
+`benchmarks/object_storage.py` measures upload and download throughput for one
+object, p50/p95 metadata-read latency, stored replica bytes as a ratio of
+object size, and recovery time after a storage-node loss. It verifies the
+download bytes and confirms that the object remains readable while a node is
+down. Recovery ends when every chunk again has the configured number of
+reachable, metadata-recorded replicas. The script stops and restarts the
+storage node holding the most replicas for its generated benchmark object.
+
+To rerun it, start the infrastructure and metadata service as described in
+[Local development](#local-development). Then, from the repository root, run:
+If the default PostgreSQL host port `5433` is occupied, set an available
+`METADATA_POSTGRES_PORT` in `.env` and use that same value for the
+metadata-service process.
+
+```bash
+python3 benchmarks/object_storage.py --size-mib 8 --metadata-samples 100
+```
+
+Options include `--base-url`, `--size-mib`, `--metadata-samples`,
+`--replication-factor`, and `--repair-timeout-seconds`. Use `--node-url` and
+`--node-container` as `NODE_ID=VALUE` pairs when the local node addresses or
+Docker container names differ from the Compose defaults. The script deletes
+its generated object and restarts the stopped node during cleanup; leave the
+default object-store stack running while it measures.
+
+Recorded local result (2026-10-28; Docker Desktop allocated 8 CPUs and
+7.65 GiB memory; 8 MiB object, 8 chunks, replication factor 2, 100 metadata
+samples):
+
+| Upload | Download | Metadata p50 / p95 | Replica overhead | Recovery |
+|---:|---:|---:|---:|---:|
+| 18.39 MiB/s | 39.61 MiB/s | 2.99 / 3.30 ms | 2.00× | 7.46 s |
+
+The object remained readable during node loss. This is one local run; results
+depend on host resources, storage-node placement, and the configured repair
+interval.
+
 ## Limitations
 
 Deliberate boundaries — the system is honest about them rather than
