@@ -38,6 +38,18 @@ public class StorageNodeClient {
                 .build();
     }
 
+    /** Checks actuator health without throwing when a node is unavailable. */
+    public boolean probeNode(StorageProperties.Node node) {
+        try {
+            return restClient.get()
+                    .uri(node.baseUrl() + "/actuator/health")
+                    .exchange((request, response) ->
+                            response.getStatusCode().is2xxSuccessful());
+        } catch (RestClientException exception) {
+            return false;
+        }
+    }
+
     public void putChunk(StorageProperties.Node node, UUID chunkId,
                          byte[] bytes, String sha256) {
         try {

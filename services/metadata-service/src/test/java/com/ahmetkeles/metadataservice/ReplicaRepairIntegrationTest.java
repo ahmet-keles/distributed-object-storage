@@ -1,6 +1,9 @@
 package com.ahmetkeles.metadataservice;
 
 import com.ahmetkeles.metadataservice.client.StorageNodeClient;
+import com.ahmetkeles.metadataservice.health.NodeHealthView;
+import com.ahmetkeles.metadataservice.health.NodeHealthService;
+import com.ahmetkeles.metadataservice.health.NodeHealthStatus;
 import com.ahmetkeles.metadataservice.repair.RepairReport;
 import com.ahmetkeles.metadataservice.repair.RepairStore;
 import com.ahmetkeles.metadataservice.repair.ReplicaRepairService;
@@ -13,6 +16,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -42,6 +47,9 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 /**
  * The repair sweep's whole contract, driven synchronously (the background
@@ -51,7 +59,7 @@ import static org.mockito.Mockito.doAnswer;
  * refusal to propagate unverifiable bytes, capacity-aware catch-up, and
  * idempotent, concurrency-safe metadata recording.
  */
-@SpringBootTest
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class ReplicaRepairIntegrationTest {
 
     private static final int CHUNK_SIZE = 1024;
@@ -85,6 +93,7 @@ class ReplicaRepairIntegrationTest {
         // chunk counts makes every sweep exercise the paged scan for real.
         registry.add("storage.repair.enabled", () -> false);
         registry.add("storage.repair.scan-page-size", () -> 3);
+        registry.add("storage.health.interval", () -> "PT1H");
 
         registry.add("storage.nodes[0].id", () -> "node-1");
         registry.add("storage.nodes[0].base-url", node1::baseUrl);
@@ -107,6 +116,9 @@ class ReplicaRepairIntegrationTest {
     @Autowired
     private ReplicaRepairService repairService;
 
+    @Autowired
+    private NodeHealthService nodeHealthService;
+
     @MockitoSpyBean
     private StorageNodeClient nodeClient;
 
@@ -116,12 +128,19 @@ class ReplicaRepairIntegrationTest {
     @Autowired
     private StoredObjectRepository repository;
 
+    @LocalServerPort
+    private int port;
+
+    private final TestRestTemplate rest = new TestRestTemplate();
+
     @BeforeEach
     void resetFailures() {
         nodesById.values().forEach(node -> {
             node.setDown(false);
             node.setCorrupt(false);
         });
+        nodeHealthService.refresh();
+        nodeHealthService.refresh();
     }
 
     /**
@@ -166,8 +185,14 @@ class ReplicaRepairIntegrationTest {
                 .filter(chunk -> chunk.nodeIds().contains(victimId))
                 .toList();
         nodesById.get(victimId).setDown(true);
+        nodeHealthService.refresh();
+        clearInvocations(nodeClient);
 
         RepairReport report = repairService.sweep();
+
+        verify(nodeClient, never()).probeChunk(
+                argThat(node -> node != null && node.id().equals(victimId)),
+                any(UUID.class));
 
         assertEquals(affected.size(), report.chunksDegraded());
         assertEquals(affected.size(), report.replicasRecreated(),
@@ -219,6 +244,48 @@ class ReplicaRepairIntegrationTest {
                     "chunk " + chunk.chunkIndex() + " must be back at the "
                             + "replication factor on live nodes");
         }
+    }
+
+    @Test
+    void nodeHealthReportsHealthyDownAndRecoveringStates() {
+        nodeHealthService.refresh();
+        assertTrue(nodeHealthService.snapshot().stream()
+                .allMatch(node -> node.status() == NodeHealthStatus.HEALTHY));
+
+        node1.setDown(true);
+        nodeHealthService.refresh();
+        assertEquals(NodeHealthStatus.DOWN,
+                nodeHealthService.snapshot().stream()
+                        .filter(node -> node.nodeId().equals("node-1"))
+                        .findFirst().orElseThrow().status());
+
+        node1.setDown(false);
+        nodeHealthService.refresh();
+        assertEquals(NodeHealthStatus.RECOVERING,
+                nodeHealthService.snapshot().stream()
+                        .filter(node -> node.nodeId().equals("node-1"))
+                        .findFirst().orElseThrow().status());
+
+        nodeHealthService.refresh();
+        assertEquals(NodeHealthStatus.HEALTHY,
+                nodeHealthService.snapshot().stream()
+                        .filter(node -> node.nodeId().equals("node-1"))
+                        .findFirst().orElseThrow().status());
+    }
+
+    @Test
+    void nodeHealthIsExposedThroughTheCoordinatorApi() {
+        nodeHealthService.refresh();
+
+        var response = rest.getForEntity(
+                "http://localhost:" + port + "/api/nodes/health",
+                NodeHealthView[].class);
+
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals(3, response.getBody().length);
+        assertEquals("node-1", response.getBody()[0].nodeId());
+        assertEquals(NodeHealthStatus.HEALTHY,
+                response.getBody()[0].status());
     }
 
     @Test

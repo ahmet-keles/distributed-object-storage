@@ -5,6 +5,7 @@ import com.ahmetkeles.metadataservice.client.StorageNodeClient;
 import com.ahmetkeles.metadataservice.client.StorageNodeUnavailableException;
 import com.ahmetkeles.metadataservice.config.RepairProperties;
 import com.ahmetkeles.metadataservice.config.StorageProperties;
+import com.ahmetkeles.metadataservice.health.NodeHealthService;
 import com.ahmetkeles.metadataservice.placement.ChunkPlacementService;
 import com.ahmetkeles.metadataservice.service.Checksums;
 import org.slf4j.Logger;
@@ -57,6 +58,7 @@ public class ReplicaRepairService {
     private final ChunkPlacementService placementService;
     private final StorageProperties properties;
     private final RepairProperties repairProperties;
+    private final NodeHealthService nodeHealthService;
     private final Map<String, StorageProperties.Node> nodesById;
 
     public ReplicaRepairService(
@@ -64,13 +66,15 @@ public class ReplicaRepairService {
             StorageNodeClient nodeClient,
             ChunkPlacementService placementService,
             StorageProperties properties,
-            RepairProperties repairProperties
+            RepairProperties repairProperties,
+            NodeHealthService nodeHealthService
     ) {
         this.repairStore = repairStore;
         this.nodeClient = nodeClient;
         this.placementService = placementService;
         this.properties = properties;
         this.repairProperties = repairProperties;
+        this.nodeHealthService = nodeHealthService;
         this.nodesById = properties.nodes().stream()
                 .collect(Collectors.toMap(
                         StorageProperties.Node::id, Function.identity()));
@@ -178,7 +182,9 @@ public class ReplicaRepairService {
         for (String nodeId : chunk.replicaNodeIds()) {
             StorageProperties.Node node = nodesById.get(nodeId);
 
-            if (node == null || downNodes.contains(nodeId)) {
+            if (node == null || downNodes.contains(nodeId)
+                    || nodeHealthService.isDown(nodeId)) {
+                downNodes.add(nodeId);
                 probes.put(nodeId, ReplicaProbe.UNREACHABLE);
                 continue;
             }

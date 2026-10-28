@@ -32,6 +32,7 @@ final class FakeStorageNode {
         }
 
         server.createContext("/chunks/", this::handle);
+        server.createContext("/actuator/health", this::handleHealth);
         server.start();
     }
 
@@ -117,6 +118,18 @@ final class FakeStorageNode {
                 }
                 default -> exchange.sendResponseHeaders(405, -1);
             }
+        }
+    }
+
+    private void handleHealth(HttpExchange exchange) throws IOException {
+        try (exchange) {
+            byte[] body = (down.get()
+                    ? "{\"status\":\"DOWN\"}"
+                    : "{\"status\":\"UP\"}").getBytes();
+            exchange.getResponseHeaders().set(
+                    "Content-Type", "application/json");
+            exchange.sendResponseHeaders(down.get() ? 503 : 200, body.length);
+            exchange.getResponseBody().write(body);
         }
     }
 }
