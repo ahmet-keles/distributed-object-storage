@@ -4,6 +4,9 @@ import com.ahmetkeles.metadataservice.api.ObjectController;
 import com.ahmetkeles.metadataservice.api.ObjectMetadataResponse;
 import com.ahmetkeles.metadataservice.repository.StoredObjectRepository;
 import com.ahmetkeles.metadataservice.service.Checksums;
+import com.ahmetkeles.metadataservice.service.ObjectPlan;
+import com.ahmetkeles.metadataservice.service.ObjectStorageService;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -70,6 +73,7 @@ class ObjectStorageIntegrationTest {
         registry.add("spring.datasource.url", postgres::getJdbcUrl);
         registry.add("spring.datasource.username", postgres::getUsername);
         registry.add("spring.datasource.password", postgres::getPassword);
+        TestRedis.register(registry);
 
         registry.add("storage.chunk-size-bytes", () -> CHUNK_SIZE);
         registry.add("storage.replication-factor", () -> 2);
@@ -100,6 +104,12 @@ class ObjectStorageIntegrationTest {
     @Autowired
     private StoredObjectRepository repository;
 
+    @Autowired
+    private StringRedisTemplate redisTemplate;
+
+    @Autowired
+    private ObjectStorageService objectStorageService;
+
     private final TestRestTemplate rest = new TestRestTemplate();
 
     @BeforeEach
@@ -108,6 +118,42 @@ class ObjectStorageIntegrationTest {
             node.setDown(false);
             node.setCorrupt(false);
         });
+    }
+
+    @Test
+    void metadataReadMissFillsCacheAndNextReadUsesCachedPlan() {
+        String key = "cache-hit-" + UUID.randomUUID();
+        upload(key, randomBytes(512));
+
+        ObjectPlan first = metadata(key);
+        String cached = redisTemplate.opsForValue().get(cacheKey(key));
+        ObjectPlan second = metadata(key);
+
+        assertTrue(cached != null);
+        assertEquals(first, second);
+        assertEquals(cached, redisTemplate.opsForValue().get(cacheKey(key)));
+    }
+
+    @Test
+    void uploadAndDeleteInvalidateCachedMetadata() {
+        String key = "cache-invalidation-" + UUID.randomUUID();
+        redisTemplate.opsForValue().set(cacheKey(key), "stale");
+
+        upload(key, randomBytes(512));
+        assertEquals(null, redisTemplate.opsForValue().get(cacheKey(key)));
+
+        metadata(key);
+        assertTrue(redisTemplate.opsForValue().get(cacheKey(key)) != null);
+        rest.delete("http://localhost:" + port + "/api/objects/" + key);
+        assertEquals(null, redisTemplate.opsForValue().get(cacheKey(key)));
+    }
+
+    private ObjectPlan metadata(String key) {
+        return objectStorageService.metadata(key);
+    }
+
+    private static String cacheKey(String key) {
+        return "object-metadata:" + key;
     }
 
     @Test

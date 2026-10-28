@@ -104,6 +104,13 @@ final class E2eStack {
                 .withNetwork(network)
                 .withNetworkAliases("metadata-db");
 
+        GenericContainer<?> metadataCache = new GenericContainer<>(
+                DockerImageName.parse("redis:7-alpine"))
+                .withNetwork(network)
+                .withNetworkAliases("metadata-cache")
+                .withExposedPorts(6379)
+                .waitingFor(Wait.forListeningPort());
+
         for (int i = 1; i <= 3; i++) {
             String alias = "storage-node-" + i;
             // High static addresses (.101+) stay clear of the low range the
@@ -122,9 +129,9 @@ final class E2eStack {
                             .withStartupTimeout(Duration.ofMinutes(3))));
         }
 
-        Startables.deepStart(
-                Stream.concat(Stream.of(metadataDb),
-                        storageNodes.values().stream()).toList()).join();
+        Startables.deepStart(Stream.concat(
+                Stream.of(metadataDb, metadataCache),
+                storageNodes.values().stream()).toList()).join();
 
         Map<String, String> metadataEnv = new LinkedHashMap<>(Map.of(
                 "METADATA_POSTGRES_HOST", "metadata-db",
@@ -132,6 +139,8 @@ final class E2eStack {
                 "METADATA_POSTGRES_DB", "objectstore",
                 "METADATA_POSTGRES_USER", "objectstore_user",
                 "METADATA_POSTGRES_PASSWORD", DB_PASSWORD,
+                "METADATA_REDIS_HOST", "metadata-cache",
+                "METADATA_REDIS_PORT", "6379",
                 "STORAGE_CHUNK_SIZE_BYTES", String.valueOf(CHUNK_SIZE),
                 // Tight sweep interval so the repair e2e test observes
                 // recovery in seconds; repair only ever acts on degraded

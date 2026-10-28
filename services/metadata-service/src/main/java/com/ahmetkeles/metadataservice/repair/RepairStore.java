@@ -3,6 +3,7 @@ package com.ahmetkeles.metadataservice.repair;
 import com.ahmetkeles.metadataservice.domain.Chunk;
 import com.ahmetkeles.metadataservice.domain.ChunkReplica;
 import com.ahmetkeles.metadataservice.repository.ChunkRepository;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -37,9 +38,12 @@ public class RepairStore {
     }
 
     private final ChunkRepository chunkRepository;
+    private final StringRedisTemplate redis;
 
-    public RepairStore(ChunkRepository chunkRepository) {
+    public RepairStore(ChunkRepository chunkRepository,
+                       StringRedisTemplate redis) {
         this.chunkRepository = chunkRepository;
+        this.redis = redis;
     }
 
     /**
@@ -91,6 +95,7 @@ public class RepairStore {
                 .orElse(-1) + 1;
 
         chunk.addReplica(nodeId, nextPriority);
+        redis.delete("object-metadata:" + chunk.getObject().getObjectKey());
 
         return RecordOutcome.RECORDED;
     }
