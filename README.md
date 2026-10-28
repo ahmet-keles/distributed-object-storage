@@ -295,15 +295,12 @@ pretending otherwise:
 - **Static membership.** Nodes are configuration, not discovery, and node
   ids are load-bearing: replicas are recorded against them. Reordering the
   list or changing a node's URL is safe while ids are preserved; adding
-  nodes changes placement for *new* objects only; but **removing or
-  renaming an id that still owns recorded replicas makes those replicas
-  unreachable** — repair can re-create a chunk's copies elsewhere only
+  nodes changes consistent-hash placement for *new* objects only; but
+  **removing or renaming an id that still owns recorded replicas makes those
+  replicas unreachable** — repair can re-create a chunk's copies elsewhere only
   while at least one of its recorded ids still resolves and serves intact
-  bytes. There is no rebalancing or migration; dynamic membership is
-  future work.
-- **Modulo placement, not consistent hashing.** Changing the node count
-  remaps future placements wholesale. Fine at this scale; consistent
-  hashing comes later.
+  bytes. Membership changes do not migrate existing replicas; rebalancing
+  existing data is future work.
 - **Writes need every replica.** An upload fails (502, nothing committed)
   if any placement-selected node is down. There is no write quorum or
   hinted handoff.

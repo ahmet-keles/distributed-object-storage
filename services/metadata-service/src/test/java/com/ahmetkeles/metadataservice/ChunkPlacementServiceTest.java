@@ -4,10 +4,12 @@ import com.ahmetkeles.metadataservice.config.StorageProperties;
 import com.ahmetkeles.metadataservice.placement.ChunkPlacementService;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -87,6 +89,56 @@ class ChunkPlacementServiceTest {
 
         assertEquals(3, usedNodes.size(),
                 "100 chunks over 3 nodes must use every node");
+    }
+
+    @Test
+    void addingNodeMovesOnlyASmallShareOfChunkReplicaSets() {
+        List<StorageProperties.Node> tenNodes = IntStream
+                .rangeClosed(1, 10)
+                .mapToObj(index -> new StorageProperties.Node(
+                        "node-%02d".formatted(index),
+                        "http://n" + index))
+                .toList();
+        List<StorageProperties.Node> elevenNodes = new ArrayList<>(tenNodes);
+        elevenNodes.add(new StorageProperties.Node("node-11", "http://n11"));
+        ChunkPlacementService before = new ChunkPlacementService(
+                new StorageProperties(1024, 2, 1_000_000, tenNodes));
+        ChunkPlacementService after = new ChunkPlacementService(
+                new StorageProperties(1024, 2, 1_000_000, elevenNodes));
+        UUID objectId = UUID.fromString(
+                "00112233-4455-6677-8899-aabbccddeeff");
+
+        int changed = 0;
+        int chunks = 10_000;
+        for (int index = 0; index < chunks; index++) {
+            List<String> oldNodes = before.replicasFor(objectId, index).stream()
+                    .map(StorageProperties.Node::id)
+                    .toList();
+            List<String> newNodes = after.replicasFor(objectId, index).stream()
+                    .map(StorageProperties.Node::id)
+                    .toList();
+            if (!oldNodes.equals(newNodes)) {
+                changed++;
+            }
+        }
+
+        assertTrue(changed < chunks * 35 / 100,
+                "adding one node to a 10-node cluster should remap only a "
+                        + "small share of replica sets; changed " + changed
+                        + " of " + chunks);
+    }
+
+    @Test
+    void ringOrderContainsEachConfiguredNodeOnce() {
+        List<StorageProperties.Node> ordered =
+                new ChunkPlacementService(properties)
+                        .ringFor(UUID.randomUUID(), 0);
+
+        assertEquals(3, ordered.size());
+        assertEquals(3, ordered.stream()
+                .map(StorageProperties.Node::id)
+                .distinct()
+                .count());
     }
 
     @Test
