@@ -6,12 +6,17 @@ import com.ahmetkeles.metadataservice.config.StorageProperties;
 import com.ahmetkeles.metadataservice.domain.Chunk;
 import com.ahmetkeles.metadataservice.domain.StoredObject;
 import com.ahmetkeles.metadataservice.placement.ChunkPlacementService;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -53,17 +58,27 @@ public class ObjectStorageService {
     private final StorageNodeClient nodeClient;
     private final StorageProperties properties;
     private final Map<String, StorageProperties.Node> nodesById;
+    private final StringRedisTemplate redis;
+    private final ObjectMapper objectMapper;
+    private final Duration metadataCacheTtl;
 
     public ObjectStorageService(
             MetadataStore metadataStore,
             ChunkPlacementService placementService,
             StorageNodeClient nodeClient,
-            StorageProperties properties
+            StorageProperties properties,
+            StringRedisTemplate redis,
+            ObjectMapper objectMapper,
+            @Value(
+                    "${storage.metadata-cache.ttl:PT60S}") Duration metadataCacheTtl
     ) {
         this.metadataStore = metadataStore;
         this.placementService = placementService;
         this.nodeClient = nodeClient;
         this.properties = properties;
+        this.redis = redis;
+        this.objectMapper = objectMapper;
+        this.metadataCacheTtl = metadataCacheTtl;
         this.nodesById = properties.nodes().stream()
                 .collect(Collectors.toMap(
                         StorageProperties.Node::id, Function.identity()));
@@ -124,6 +139,7 @@ public class ObjectStorageService {
             }
 
             metadataStore.save(object);
+            invalidateMetadata(objectKey);
         } catch (StorageNodeUnavailableException exception) {
             cleanUp(written, PendingWrite::node, PendingWrite::chunkId);
             throw new ObjectUploadException(objectKey, exception);
@@ -172,8 +188,28 @@ public class ObjectStorageService {
     public ObjectPlan metadata(String objectKey) {
         validateKey(objectKey);
 
-        return metadataStore.planFor(objectKey)
+        String cacheKey = metadataCacheKey(objectKey);
+        String cached = redis.opsForValue().get(cacheKey);
+        if (cached != null) {
+            try {
+                return objectMapper.readValue(cached, ObjectPlan.class);
+            } catch (JacksonException exception) {
+                log.warn("Discarding invalid cached metadata for {}", objectKey,
+                        exception);
+                redis.delete(cacheKey);
+            }
+        }
+
+        ObjectPlan plan = metadataStore.planFor(objectKey)
                 .orElseThrow(() -> new ObjectNotFoundException(objectKey));
+        try {
+            redis.opsForValue().set(cacheKey,
+                    objectMapper.writeValueAsString(plan), metadataCacheTtl);
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("Could not cache object metadata",
+                    exception);
+        }
+        return plan;
     }
 
     public void delete(String objectKey) {
@@ -181,6 +217,7 @@ public class ObjectStorageService {
 
         ObjectPlan plan = metadataStore.deleteByKey(objectKey)
                 .orElseThrow(() -> new ObjectNotFoundException(objectKey));
+        invalidateMetadata(objectKey);
 
         for (ObjectPlan.ChunkPlan chunk : plan.chunks()) {
             for (String nodeId : chunk.nodeIds()) {
@@ -202,6 +239,14 @@ public class ObjectStorageService {
                 }
             }
         }
+    }
+
+    private static String metadataCacheKey(String objectKey) {
+        return "object-metadata:" + objectKey;
+    }
+
+    private void invalidateMetadata(String objectKey) {
+        redis.delete(metadataCacheKey(objectKey));
     }
 
     private byte[] fetchChunk(String objectKey, ObjectPlan.ChunkPlan chunk) {

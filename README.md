@@ -185,7 +185,7 @@ cp .env.example .env                     # fill in local values
 
 # build the storage-node image input, then start the infrastructure:
 (cd services/storage-node && ./mvnw -DskipTests package)
-docker compose up -d --wait              # metadata-db (5433), node-1..3 (9001..9003)
+docker compose up -d --wait              # metadata-db (5433), Redis (6379), node-1..3
 
 # run the coordinator on the host:
 cd services/metadata-service
@@ -225,7 +225,8 @@ Docker must be running — integration tests use Testcontainers.
                                                # (down nodes, corrupted replicas, failed uploads),
                                                # plus the repair sweep: lost/missing replicas,
                                                # verified-source refusal, idempotency, and a
-                                               # deterministic concurrent-repair race
+                                               # deterministic concurrent-repair race, Redis
+                                               # metadata-cache hit/miss/invalidation
 
 # end-to-end: real PostgreSQL + three real storage-node containers + the
 # metadata service, including genuine node losses (containers stopped) and
@@ -316,9 +317,11 @@ pretending otherwise:
 - **Single coordinator, no auth, plain HTTP.** metadata-service is one
   process and the trust boundary is the network.
 - **Not S3.** No S3 API compatibility, signed URLs, versioning, or
-  multipart. Redis and cloud deployment are also out of scope for now.
+  multipart. Metadata reads use a Redis cache with a configurable 60-second
+  TTL (`METADATA_CACHE_TTL`); successful uploads, deletes, and replica repairs
+  evict the key. Redis must be available to read or mutate object metadata.
 
 ## Stack
 
-Java 21 · Spring Boot · PostgreSQL 17 + Flyway · Docker / Docker Compose ·
+Java 21 · Spring Boot · PostgreSQL 17 + Flyway · Redis · Docker / Docker Compose ·
 Testcontainers · GitHub Actions
